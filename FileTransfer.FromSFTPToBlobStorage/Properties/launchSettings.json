@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "FileTransfer.FromSFTPToBlobStorage": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7089",
+      "launchBrowser": false
+    }
+  }
+}
