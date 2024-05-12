@@ -25,7 +25,6 @@ internal sealed class UploadBlobCommandHandler : IRequestHandler<UploadBlobComma
     {
         if (request.Stream is null)
         {
-
             _logger.LogError("[Upload Blob]: Stream cannot be null. File: '{file}'", request.FileName);
             return;
         }
@@ -36,19 +35,25 @@ internal sealed class UploadBlobCommandHandler : IRequestHandler<UploadBlobComma
             return;
         }
 
-        if (!request.Stream.CanSeek)
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_blobSettings.Value.Container);
+        await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+        var blobClinet = containerClient.GetBlobClient($"{_blobSettings.Value.Directory}/{request.FileName}");
+        if (request.Stream.Position is not 0)
         {
-            _logger.LogError("[Upload Blob]: Stream must be seekable. File: '{file}'", request.FileName);
+            if (!request.Stream.CanSeek)
+            {
+                using MemoryStream memoryStream = new();
+                await request.Stream.CopyToAsync(memoryStream, cancellationToken);
+                memoryStream.Seek(0, SeekOrigin.Begin);
+                await blobClinet.UploadAsync(memoryStream, true, cancellationToken);
+                return;
+            }
+
+            request.Stream.Seek(0, SeekOrigin.Begin);
+            await blobClinet.UploadAsync(request.Stream, true, cancellationToken);
             return;
         }
 
-        if (request.Stream.Position is not 0)
-            request.Stream.Seek(0, SeekOrigin.Begin);
-
-        var containerClient = _blobServiceClient.GetBlobContainerClient(_blobSettings.Value.Container);
-        await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
-
-        var blobClinet = containerClient.GetBlobClient($"{_blobSettings.Value.Directory}/{request.FileName}");
         await blobClinet.UploadAsync(request.Stream, true, cancellationToken);
     }
 }

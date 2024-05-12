@@ -1,5 +1,6 @@
 ﻿using FileTransfer.Library.Application.Commands.BlobStorageCommands.UploadBlob;
 using FileTransfer.Library.Common.Settings.SftpServerSettings;
+using FluentFTP;
 using MediatR;
 using Microsoft.Extensions.Options;
 using Renci.SshNet;
@@ -10,7 +11,6 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
 {
     private readonly ISender _mediator;
     private readonly IOptions<SftpServerSettings> _sftpServerSettings;
-    private readonly ConnectionInfo _connectionInfo;
 
     public TransferFilesFromSftpToBlobStorageCommandHandler(
         ISender mediator,
@@ -18,19 +18,31 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
     {
         _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _sftpServerSettings = sftpServerSettings ?? throw new ArgumentNullException(nameof(sftpServerSettings));
-
-        _connectionInfo = new ConnectionInfo(
-            _sftpServerSettings.Value.Host,
-            _sftpServerSettings.Value.Port,
-            _sftpServerSettings.Value.Username,
-            new PasswordAuthenticationMethod(
-            _sftpServerSettings.Value.Username,
-            _sftpServerSettings.Value.Password));
     }
 
     public async Task Handle(TransferFilesFromSftpToBlobStorageCommand request, CancellationToken cancellationToken)
     {
-        using SftpClient sftpClient = new(_connectionInfo);
+
+        switch (_sftpServerSettings.Value.FileProtocol)
+        {
+            case "sftp":
+                await SftpHandler(cancellationToken);
+                break;
+            case "ftp":
+                await FtpHandler(cancellationToken);
+                break;
+        }
+    }
+
+    private async Task SftpHandler(CancellationToken cancellationToken = default)
+    {
+        var connection = new ConnectionInfo(
+            _sftpServerSettings.Value.Host,
+            _sftpServerSettings.Value.Port,
+            _sftpServerSettings.Value.Username,
+            new PasswordAuthenticationMethod(_sftpServerSettings.Value.Username, _sftpServerSettings.Value.Password));
+
+        using SftpClient sftpClient = new(connection);
 
         sftpClient.Connect();
 
@@ -50,5 +62,34 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
         }
 
         sftpClient.Disconnect();
+    }
+
+    private async Task FtpHandler(CancellationToken cancellationToken)
+    {
+        using FtpClient ftpClient = new(
+            _sftpServerSettings.Value.Host,
+            _sftpServerSettings.Value.Username,
+            _sftpServerSettings.Value.Password,
+            _sftpServerSettings.Value.Port);
+
+        ftpClient.Connect();
+
+        var files = ftpClient.GetListing(_sftpServerSettings.Value.Directory);
+
+        foreach (var file in files)
+        {
+            if (file.Type == FtpObjectType.Directory)
+                continue;
+
+            using (Stream remoteStream = ftpClient.OpenRead(file.FullName))
+            {
+                await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
+            }
+
+            ftpClient.DeleteFile(file.FullName);
+        }
+
+        ftpClient.Disconnect();
+
     }
 }
