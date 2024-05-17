@@ -1,7 +1,9 @@
-﻿using FileTransfer.Library.Application.Commands.BlobStorageCommands.UploadBlob;
+﻿using FileTransfer.Library.Application.Commands.BlobStorageCommands.CheckIfBlobExists;
+using FileTransfer.Library.Application.Commands.BlobStorageCommands.UploadBlob;
 using FileTransfer.Library.Common.Settings.SftpServerSettings;
 using FluentFTP;
 using MediatR;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Renci.SshNet;
 
@@ -11,18 +13,20 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
 {
     private readonly ISender _mediator;
     private readonly IOptions<SftpServerSettings> _sftpServerSettings;
+    private readonly ILogger<TransferFilesFromSftpToBlobStorageCommandHandler> _logger;
 
     public TransferFilesFromSftpToBlobStorageCommandHandler(
         ISender mediator,
-        IOptions<SftpServerSettings> sftpServerSettings)
+        IOptions<SftpServerSettings> sftpServerSettings,
+        ILogger<TransferFilesFromSftpToBlobStorageCommandHandler> logger)
     {
         _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _sftpServerSettings = sftpServerSettings ?? throw new ArgumentNullException(nameof(sftpServerSettings));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task Handle(TransferFilesFromSftpToBlobStorageCommand request, CancellationToken cancellationToken)
     {
-
         switch (_sftpServerSettings.Value.FileProtocol)
         {
             case "sftp":
@@ -36,60 +40,86 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
 
     private async Task SftpHandler(CancellationToken cancellationToken = default)
     {
-        var connection = new ConnectionInfo(
-            _sftpServerSettings.Value.Host,
-            _sftpServerSettings.Value.Port,
-            _sftpServerSettings.Value.Username,
-            new PasswordAuthenticationMethod(_sftpServerSettings.Value.Username, _sftpServerSettings.Value.Password));
-
-        using SftpClient sftpClient = new(connection);
-
-        sftpClient.Connect();
-
-        var files = sftpClient.ListDirectory(_sftpServerSettings.Value.Directory);
-
-        foreach (var file in files)
+        try
         {
-            if (file.IsDirectory)
-                continue;
+            var connection = new ConnectionInfo(
+                _sftpServerSettings.Value.Host,
+                _sftpServerSettings.Value.Port,
+                _sftpServerSettings.Value.Username,
+                new PasswordAuthenticationMethod(_sftpServerSettings.Value.Username, _sftpServerSettings.Value.Password));
 
-            using (Stream remoteStream = sftpClient.OpenRead(file.FullName))
+            using SftpClient sftpClient = new(connection);
+            sftpClient.Connect();
+
+            if (!sftpClient.IsConnected)
             {
-                await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
+                _logger.LogError("Failed to establish SFTP connection to '{server}' server.", _sftpServerSettings.Value.Host);
+                return;
             }
 
-            sftpClient.DeleteFile(file.FullName);
-        }
+            var files = sftpClient.ListDirectory(_sftpServerSettings.Value.Directory);
+            foreach (var file in files)
+            {
+                if (file.IsDirectory)
+                    continue;
 
-        sftpClient.Disconnect();
+                using (Stream remoteStream = sftpClient.OpenRead(file.FullName))
+                {
+                    await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
+                }
+
+                var wasBlobUploaded = await _mediator.Send(new CheckIfBlobExistsQuery(file.Name), cancellationToken);
+                if (wasBlobUploaded)
+                    sftpClient.DeleteFile(file.FullName);
+            }
+
+            sftpClient.Disconnect();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex.Message);
+        }
     }
 
     private async Task FtpHandler(CancellationToken cancellationToken)
     {
-        using FtpClient ftpClient = new(
-            _sftpServerSettings.Value.Host,
-            _sftpServerSettings.Value.Username,
-            _sftpServerSettings.Value.Password,
-            _sftpServerSettings.Value.Port);
-
-        ftpClient.Connect();
-
-        var files = ftpClient.GetListing(_sftpServerSettings.Value.Directory);
-
-        foreach (var file in files)
+        try
         {
-            if (file.Type == FtpObjectType.Directory)
-                continue;
+            using FtpClient ftpClient = new(
+                _sftpServerSettings.Value.Host,
+                _sftpServerSettings.Value.Username,
+                _sftpServerSettings.Value.Password,
+                _sftpServerSettings.Value.Port);
 
-            using (Stream remoteStream = ftpClient.OpenRead(file.FullName))
+            ftpClient.Connect();
+
+            if (!ftpClient.IsConnected)
             {
-                await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
+                _logger.LogError("Failed to establish FTP connection to '{server}' server.", _sftpServerSettings.Value.Host);
+                return;
             }
 
-            ftpClient.DeleteFile(file.FullName);
+            var files = ftpClient.GetListing(_sftpServerSettings.Value.Directory);
+            foreach (var file in files)
+            {
+                if (file.Type == FtpObjectType.Directory)
+                    continue;
+
+                using (Stream remoteStream = ftpClient.OpenRead(file.FullName))
+                {
+                    await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
+                }
+
+                var wasBlobUploaded = await _mediator.Send(new CheckIfBlobExistsQuery(file.Name), cancellationToken);
+                if (wasBlobUploaded)
+                    ftpClient.DeleteFile(file.FullName);
+            }
+
+            ftpClient.Disconnect();
         }
-
-        ftpClient.Disconnect();
-
+        catch (Exception ex)
+        {
+            _logger.LogError(ex.Message);
+        }
     }
 }

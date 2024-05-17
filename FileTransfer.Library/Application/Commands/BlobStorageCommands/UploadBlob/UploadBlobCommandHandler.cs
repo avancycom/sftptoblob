@@ -37,7 +37,7 @@ internal sealed class UploadBlobCommandHandler : IRequestHandler<UploadBlobComma
 
         var containerClient = _blobServiceClient.GetBlobContainerClient(_blobSettings.Value.Container);
         await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
-        var blobClinet = containerClient.GetBlobClient($"{_blobSettings.Value.Directory}/{request.FileName}");
+        var blobClient = containerClient.GetBlobClient($"{_blobSettings.Value.Directory}/{request.FileName}");
         if (request.Stream.Position is not 0)
         {
             if (!request.Stream.CanSeek)
@@ -45,15 +45,15 @@ internal sealed class UploadBlobCommandHandler : IRequestHandler<UploadBlobComma
                 using MemoryStream memoryStream = new();
                 await request.Stream.CopyToAsync(memoryStream, cancellationToken);
                 memoryStream.Seek(0, SeekOrigin.Begin);
-                await blobClinet.UploadAsync(memoryStream, true, cancellationToken);
+                await blobClient.UploadAsync(memoryStream, true, cancellationToken);
                 return;
             }
 
             request.Stream.Seek(0, SeekOrigin.Begin);
-            await blobClinet.UploadAsync(request.Stream, true, cancellationToken);
+            await blobClient.UploadAsync(request.Stream, true, cancellationToken);
             return;
         }
 
-        await blobClinet.UploadAsync(request.Stream, true, cancellationToken);
+        await blobClient.UploadAsync(request.Stream, true, cancellationToken);
     }
 }
