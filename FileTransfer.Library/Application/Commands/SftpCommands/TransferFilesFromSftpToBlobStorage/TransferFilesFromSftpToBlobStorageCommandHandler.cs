@@ -1,5 +1,4 @@
-﻿using FileTransfer.Library.Application.Commands.BlobStorageCommands.CheckIfBlobExists;
-using FileTransfer.Library.Application.Commands.BlobStorageCommands.UploadBlob;
+﻿using FileTransfer.Library.Application.Commands.BlobStorageCommands.UploadBlob;
 using FileTransfer.Library.Common.Settings.SftpServerSettings;
 using FluentFTP;
 using MediatR;
@@ -68,9 +67,7 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
                     await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
                 }
 
-                var wasBlobUploaded = await _mediator.Send(new CheckIfBlobExistsQuery(file.Name), cancellationToken);
-                if (wasBlobUploaded)
-                    sftpClient.DeleteFile(file.FullName);
+                sftpClient.DeleteFile(file.FullName);
             }
 
             sftpClient.Disconnect();
@@ -110,9 +107,7 @@ internal sealed class TransferFilesFromSftpToBlobStorageCommandHandler : IReques
                     await _mediator.Send(new UploadBlobCommand(remoteStream, file.Name), cancellationToken);
                 }
 
-                var wasBlobUploaded = await _mediator.Send(new CheckIfBlobExistsQuery(file.Name), cancellationToken);
-                if (wasBlobUploaded)
-                    ftpClient.DeleteFile(file.FullName);
+                ftpClient.DeleteFile(file.FullName);
             }
 
             ftpClient.Disconnect();
