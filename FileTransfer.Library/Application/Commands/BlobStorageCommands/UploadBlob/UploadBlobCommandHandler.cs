@@ -36,7 +36,11 @@ internal sealed class UploadBlobCommandHandler : IRequestHandler<UploadBlobComma
         }
 
         var containerClient = _blobServiceClient.GetBlobContainerClient(_blobSettings.Value.Container);
-        await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+
+        var containerClientsExists = await containerClient.ExistsAsync(cancellationToken);
+        if (!containerClientsExists)
+            await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+
         var blobClient = containerClient.GetBlobClient($"{_blobSettings.Value.Directory}/{request.FileName}");
         if (request.Stream.Position is not 0)
         {
